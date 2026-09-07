@@ -35,14 +35,40 @@
     </div>
 
     <script type="module">
-        import { db } from "./firebase-config.js";
-        import { collection, getDocs, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { auth, db } from "./firebase-config.js";
+        import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { collection, query, where, getDocs, doc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         import { initPushNotifications } from "./push-notifications.js";
 
         // تفعيل الإشعارات الفورية (Push) لموظف/صاحب لوحة إدارة الطلبات
         initPushNotifications();
 
         const ordersListDiv = document.getElementById('orders-list');
+
+        // ===== حماية الصفحة: لازم تسجيل دخول، وجلب المطعم المرتبط بالمستخدم =====
+        // (بدون هذا، استعلام الطلبات كان يجيب كل الطلبات بدون فلترة، وهذا يتعارض
+        // مع firestore.rules اللي بتشترط قراءة الطلبات فقط لصاحب المطعم المرتبط بيها)
+        let myRestaurantId = null;
+
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = "Auth.html";
+                return;
+            }
+            try {
+                const q = query(collection(db, "restaurants"), where("ownerEmail", "==", user.email));
+                const snap = await getDocs(q);
+                if (snap.empty) {
+                    ordersListDiv.innerHTML = "<p class='text-gray-500'>لا يوجد مطعم مرتبط بهذا الحساب.</p>";
+                    return;
+                }
+                myRestaurantId = snap.docs[0].id;
+                fetchOrders();
+            } catch (error) {
+                console.error("تعذر تحميل بيانات المطعم:", error);
+                ordersListDiv.innerHTML = `<p class='text-red-500'>حدث خطأ أثناء تحميل بيانات المطعم: ${error.message}</p>`;
+            }
+        });
 
         // ===== تنبيه فريق المطعم عند حلول موعد الطلب المسبق =====
         if ('Notification' in window && Notification.permission === 'default') {
@@ -112,8 +138,10 @@
         // ===== نهاية منطق التنبيه =====
 
         async function fetchOrders() {
+            if (!myRestaurantId) return;
             try {
-                const querySnapshot = await getDocs(collection(db, "orders"));
+                const q = query(collection(db, "orders"), where("restaurantId", "==", myRestaurantId));
+                const querySnapshot = await getDocs(q);
                 ordersListDiv.innerHTML = "";
                 const scheduledOrders = [];
                 
@@ -203,8 +231,6 @@
         window.changeStatus = function(orderId) {
             updateOrderStatus(orderId, "تم الشحن");
         }
-
-        fetchOrders();
     </script>
 </body>
 </html>
