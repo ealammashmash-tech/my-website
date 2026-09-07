@@ -81,7 +81,7 @@
                     </div>
                     <p class="text-xs text-gray-500 mt-1 line-clamp-2">${r.description || ''}</p>
                     <div class="flex gap-3 text-xs text-gray-600 mt-3">
-                        <span>⭐ ${r.rating ?? '-'}</span>
+                        <span>⭐ ${r.reviewsCount ? `${r.rating ?? 0} (${r.reviewsCount})` : 'جديد'}</span>
                         <span>🕒 ${r.deliveryTimeMinutes ?? '-'} د</span>
                         <span>🚚 ${r.deliveryFee ?? '-'} د.أ</span>
                     </div>

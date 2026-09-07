@@ -61,8 +61,15 @@ service cloud.firestore {
       allow create: if isSignedIn()
                     && request.resource.data.ownerEmail == request.auth.token.email;
 
-      // التعديل والحذف: فقط صاحب هذا المطعم بالذات (مقارنة الإيميل مباشرة)، أو الأدمن
-      allow update, delete: if isAdmin()
+      // التعديل: صاحب المطعم أو الأدمن يقدروا يعدلوا أي حقل،
+      // وأي مستخدم مسجل دخول مسموح له يعدّل فقط حقلي rating و reviewsCount
+      // (عشان يقدر يقيّم المطعم من غير ما يلمس باقي بيانات المطعم)
+      allow update: if isAdmin()
+                    || (isSignedIn() && resource.data.ownerEmail == request.auth.token.email)
+                    || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rating', 'reviewsCount']));
+
+      // الحذف: فقط صاحب هذا المطعم بالذات، أو الأدمن
+      allow delete: if isAdmin()
                     || (isSignedIn() && resource.data.ownerEmail == request.auth.token.email);
     }
 
@@ -84,23 +91,42 @@ service cloud.firestore {
     }
 
     // =====================================================
+    //                  reviews/{reviewId}
+    // =====================================================
+    match /reviews/{reviewId} {
+      // القراءة عامة للجميع عشان الكل يشوف تقييمات المطعم قبل ما يطلب
+      allow read: if true;
+
+      // الإنشاء: بس مستخدم مسجل دخول، وبشرط يربط customerId بحسابه هو، وتقييم بين 1 و5
+      allow create: if isSignedIn()
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.rating is int
+                    && request.resource.data.rating >= 1
+                    && request.resource.data.rating <= 5;
+
+      // التعديل والحذف: بس صاحب التقييم نفسه، أو الأدمن
+      allow update, delete: if isAdmin()
+                    || (isSignedIn() && resource.data.customerId == request.auth.uid);
+    }
+
+    // =====================================================
     //                  orders/{orderId}
     // =====================================================
     match /orders/{orderId} {
-      // الإنشاء: أي زبون مسجل دخول، وبشرط يحط الـ customerId تبعه هو
+      // الإنشاء: السماح للمستخدم المسجل بإنشاء الطلب سواء استعمل customerId أو userId
       allow create: if isSignedIn()
-                    && request.resource.data.customerId == request.auth.uid;
+                    && (request.resource.data.customerId == request.auth.uid || request.resource.data.userId == request.auth.uid);
 
-      // القراءة: الأدمن، أو الزبون صاحب الطلب، أو صاحب المطعم يلي وصله الطلب
+      // القراءة: الأدمن، أو الزبون صاحب الطلب (بأي من الحقلين)، أو صاحب المطعم المرتبط بالطلب
       allow read: if isAdmin()
-                  || (isSignedIn() && resource.data.customerId == request.auth.uid)
+                  || (isSignedIn() && (resource.data.customerId == request.auth.uid || resource.data.userId == request.auth.uid))
                   || (isSignedIn()
                       && get(/databases/$(database)/documents/restaurants/$(resource.data.restaurantId)).data.ownerEmail == request.auth.token.email);
 
       // التعديل: الأدمن أو صاحب المطعم المعني بالطلب فقط
       allow update: if isAdmin()
-                    || (isSignedIn()
-                        && get(/databases/$(database)/documents/restaurants/$(resource.data.restaurantId)).data.ownerEmail == request.auth.token.email);
+                  || (isSignedIn()
+                      && get(/databases/$(database)/documents/restaurants/$(resource.data.restaurantId)).data.ownerEmail == request.auth.token.email);
 
       // الحذف: الأدمن فقط
       allow delete: if isAdmin();
