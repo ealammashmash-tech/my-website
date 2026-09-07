@@ -131,5 +131,50 @@ service cloud.firestore {
       // الحذف: الأدمن فقط
       allow delete: if isAdmin();
     }
+
+    // =====================================================
+    //          subscriptionPlans/{planId}  (خطط الاشتراك)
+    // =====================================================
+    match /subscriptionPlans/{planId} {
+      // أي مستخدم مسجل دخول يقدر يشوف الخطط المتاحة (عشان صفحة الاشتراك تشتغل)
+      allow read: if isSignedIn();
+
+      // الإنشاء / التعديل / الحذف: الأدمن فقط
+      allow write: if isAdmin();
+    }
+
+    // =====================================================
+    //          subscriptions/{subscriptionId}  (طلبات/سجل الاشتراك)
+    // =====================================================
+    match /subscriptions/{subscriptionId} {
+      // القراءة: الأدمن يشوف الكل، وصاحب المطعم يشوف طلباته هو بس
+      allow read: if isAdmin()
+                  || (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+
+      // الإنشاء: صاحب المطعم يقدر يفتح طلب اشتراك جديد لنفسه فقط،
+      // وازم يبدأ الطلب بحالة "قيد المراجعة"
+      allow create: if isSignedIn()
+                    && request.resource.data.ownerUid == request.auth.uid
+                    && request.resource.data.status == "قيد المراجعة";
+
+      // التعديل:
+      // 1) الأدمن يقدر يعدّل أي شي (موافقة/رفض/توليد كود/إنهاء الاشتراك)
+      // 2) صاحب المطعم يقدر يفعّل اشتراكه بنفسه فقط لما يدخل كود التفعيل الصحيح
+      //    اللي ولّده الأدمن (لازم يطابق تمامًا activationCode المخزّن بالطلب)
+      allow update: if isAdmin()
+                    || (
+                      isSignedIn()
+                      && resource.data.ownerUid == request.auth.uid
+                      && resource.data.status == "بانتظار كود التفعيل"
+                      && request.resource.data.status == "نشط"
+                      && resource.data.activationCode != null
+                      && request.resource.data.enteredCode == resource.data.activationCode
+                      && request.resource.data.diff(resource.data).affectedKeys()
+                            .hasOnly(['status', 'enteredCode', 'startDate', 'endDate', 'activatedAt'])
+                    );
+
+      // الحذف: الأدمن فقط
+      allow delete: if isAdmin();
+    }
   }
 }

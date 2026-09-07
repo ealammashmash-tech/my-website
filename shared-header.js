@@ -8,6 +8,10 @@
 
 import { auth } from "./firebase-config.js";
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { initPushNotifications } from "./push-notifications.js";
+
+// تفعيل نظام الإشعارات الفورية (Push) لكل صفحة تستخدم الهيدر المشترك
+initPushNotifications();
 
 // -------- شكل الهيدر: عدّل هون لو بدك تغيّر الشعار/الروابط/الألوان --------
 const headerHTML = `

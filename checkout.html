@@ -54,6 +54,25 @@
                 <textarea id="notes" rows="2" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-safra-gold" placeholder="مثال: بدون بصل"></textarea>
             </div>
 
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">موعد الطلب</label>
+                <div class="flex gap-4 mb-2">
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" name="order-timing" id="timing-now" value="now" checked class="accent-safra-gold">
+                        <span>الآن (فوري)</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" name="order-timing" id="timing-scheduled" value="scheduled" class="accent-safra-gold">
+                        <span>طلب مسبق (حدد الوقت)</span>
+                    </label>
+                </div>
+                <div id="scheduled-time-wrapper" class="hidden">
+                    <input type="datetime-local" id="scheduled-time" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-safra-gold">
+                    <p id="schedule-hint" class="text-xs text-gray-500 mt-1"></p>
+                    <p id="schedule-error" class="text-xs text-red-500 mt-1 hidden"></p>
+                </div>
+            </div>
+
             <div class="border-t pt-3 text-sm text-gray-700">
                 <div class="flex justify-between"><span>المجموع</span><span id="ck-subtotal">0.00 د.أ</span></div>
                 <div class="flex justify-between"><span>رسوم التوصيل</span><span id="ck-fee">0.00 د.أ</span></div>
@@ -69,13 +88,74 @@
     <script type="module">
         import { auth, db } from "./firebase-config.js";
         import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { collection, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { collection, addDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         const DELIVERY_FEE = 1.5;
         const form = document.getElementById('checkout-form');
         const message = document.getElementById('message');
         const loginWarning = document.getElementById('login-warning');
         const confirmBtn = document.getElementById('confirm-btn');
+
+        // ===== منطق الطلب المسبق (جدولة الطلب) =====
+        const MIN_LEAD_MINUTES = 30;   // أقل مدة مسموحة قبل موعد التسليم
+        const MAX_LEAD_DAYS = 7;       // أقصى مدة يمكن الجدولة لها مسبقاً
+
+        const timingNow = document.getElementById('timing-now');
+        const timingScheduled = document.getElementById('timing-scheduled');
+        const scheduledWrapper = document.getElementById('scheduled-time-wrapper');
+        const scheduledInput = document.getElementById('scheduled-time');
+        const scheduleHint = document.getElementById('schedule-hint');
+        const scheduleError = document.getElementById('schedule-error');
+
+        // تحويل تاريخ JS لصيغة تقبلها خاصية datetime-local (بالتوقيت المحلي)
+        function toLocalInputValue(date) {
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+        }
+
+        function setupScheduleBounds() {
+            const now = new Date();
+            const minDate = new Date(now.getTime() + MIN_LEAD_MINUTES * 60000);
+            const maxDate = new Date(now.getTime() + MAX_LEAD_DAYS * 24 * 60 * 60000);
+            scheduledInput.min = toLocalInputValue(minDate);
+            scheduledInput.max = toLocalInputValue(maxDate);
+            scheduleHint.innerText = `اختر وقتاً بعد ${MIN_LEAD_MINUTES} دقيقة على الأقل من الآن، وبحد أقصى ${MAX_LEAD_DAYS} أيام مقدماً.`;
+        }
+        setupScheduleBounds();
+
+        function toggleScheduleUI() {
+            const isScheduled = timingScheduled.checked;
+            scheduledWrapper.classList.toggle('hidden', !isScheduled);
+            scheduledInput.required = isScheduled;
+            scheduleError.classList.add('hidden');
+            if (isScheduled) setupScheduleBounds();
+        }
+        timingNow.addEventListener('change', toggleScheduleUI);
+        timingScheduled.addEventListener('change', toggleScheduleUI);
+
+        function validateSchedule() {
+            if (!timingScheduled.checked) {
+                return { ok: true, isScheduled: false };
+            }
+            if (!scheduledInput.value) {
+                return { ok: false, msg: "الرجاء تحديد وقت الطلب المسبق." };
+            }
+            const chosen = new Date(scheduledInput.value);
+            if (isNaN(chosen.getTime())) {
+                return { ok: false, msg: "الوقت المحدد غير صالح." };
+            }
+            const now = new Date();
+            const minAllowed = new Date(now.getTime() + MIN_LEAD_MINUTES * 60000);
+            const maxAllowed = new Date(now.getTime() + MAX_LEAD_DAYS * 24 * 60 * 60000);
+            if (chosen < minAllowed) {
+                return { ok: false, msg: `الرجاء اختيار وقت بعد ${MIN_LEAD_MINUTES} دقيقة على الأقل من الآن.` };
+            }
+            if (chosen > maxAllowed) {
+                return { ok: false, msg: `لا يمكن جدولة الطلب لأكثر من ${MAX_LEAD_DAYS} أيام مقدماً.` };
+            }
+            return { ok: true, isScheduled: true, date: chosen };
+        }
+        // ===== نهاية منطق الطلب المسبق =====
 
         function getCart() {
             return JSON.parse(localStorage.getItem('safra_cart') || '[]');
@@ -122,6 +202,15 @@
                 return;
             }
 
+            const scheduleCheck = validateSchedule();
+            if (!scheduleCheck.ok) {
+                scheduleError.innerText = scheduleCheck.msg;
+                scheduleError.classList.remove('hidden');
+                scheduledInput.focus();
+                return;
+            }
+            scheduleError.classList.add('hidden');
+
             const subtotal = cart.reduce((sum, item) => sum + item.price * item.qty, 0);
             const total = subtotal + DELIVERY_FEE;
 
@@ -137,7 +226,11 @@
                 subtotal,
                 deliveryFee: DELIVERY_FEE,
                 total,
-                status: "قيد المعالجة",
+                // حقول الطلب المسبق (الجدولة)
+                isScheduled: scheduleCheck.isScheduled,
+                scheduledFor: scheduleCheck.isScheduled ? Timestamp.fromDate(scheduleCheck.date) : null,
+                scheduleNotified: false,
+                status: scheduleCheck.isScheduled ? "قيد الانتظار" : "قيد المعالجة",
                 createdAt: serverTimestamp()
             };
 
@@ -148,7 +241,9 @@
                 await addDoc(collection(db, "orders"), order);
                 localStorage.removeItem('safra_cart');
                 message.className = "text-center text-sm mt-4 text-green-600";
-                message.innerText = "تم تأكيد الطلب بنجاح! رح تحول لصفحة طلباتي...";
+                message.innerText = scheduleCheck.isScheduled
+                    ? `تم تأكيد طلبك المسبق! هيتم تجهيزه حوالي الساعة ${scheduleCheck.date.toLocaleString('ar-EG')}. رح تحول لصفحة طلباتي...`
+                    : "تم تأكيد الطلب بنجاح! رح تحول لصفحة طلباتي...";
                 setTimeout(() => window.location.href = "orders.html", 1200);
             } catch (error) {
                 message.className = "text-center text-sm mt-4 text-red-500";
